@@ -348,33 +348,21 @@ app.use((req, res, next) => {
   }
 
   // Get the original URL that was requested
-  const originalPath = req.originalUrl;
+  const originalUrl = req.originalUrl;
   
-  // Get the referer to determine the base URL
-  const referer = req.get('Referer');
-  let baseUrl;
-  let useTor = false;
-
-  if (referer) {
-    // Extract base URL and tor setting from referer
-    const refererUrl = new URL(referer);
-    if (refererUrl.pathname.startsWith('/browse')) {
-      const params = new URLSearchParams(refererUrl.search);
-      baseUrl = params.get('url');
-      useTor = params.get('tor') === 'true';
-    }
+  // Check if this is an attempt to access an external URL directly
+  if (originalUrl.includes('://')) {
+    // Already contains a protocol, redirect to browse with the full URL
+    const redirectUrl = `/browse?url=${encodeURIComponent(originalUrl)}`;
+    return res.redirect(redirectUrl);
   }
-
-  if (baseUrl) {
-    try {
-      // Resolve the path against the base URL
-      const absoluteUrl = new URL(originalPath, baseUrl).href;
-      // Redirect to the browse endpoint
-      const redirectUrl = `/browse?url=${encodeURIComponent(absoluteUrl)}${useTor ? '&tor=true' : ''}`;
-      return res.redirect(redirectUrl);
-    } catch (error) {
-      console.error('Error resolving URL:', error);
-    }
+  
+  // Handle cases where the URL is entered without protocol
+  if (!originalUrl.startsWith('/browse')) {
+    // Assume https:// if no protocol is specified
+    const assumedUrl = `https://${originalUrl.startsWith('/') ? originalUrl.slice(1) : originalUrl}`;
+    const redirectUrl = `/browse?url=${encodeURIComponent(assumedUrl)}`;
+    return res.redirect(redirectUrl);
   }
 
   // If we couldn't resolve the URL, continue to next middleware
@@ -566,6 +554,18 @@ app.get('/browse', async (req, res) => {
     return res.status(400).send('Missing URL parameter');
   }
 
+  // Ensure URL has a protocol
+  if (!url.match(/^https?:\/\//i)) {
+    url = 'https://' + url.replace(/^\/+/, '');
+  }
+
+  // Validate URL format
+  try {
+    new URL(url);
+  } catch (error) {
+    return res.status(400).send(`Invalid URL format: ${error.message}`);
+  }
+
   // Check Tor connection if needed
   if (useTor) {
     if (!torConnected) {
@@ -623,11 +623,6 @@ app.get('/browse', async (req, res) => {
         `);
       }
     }
-  }
-
-  // Fix URLs that don't have a protocol
-  if (!url.match(/^https?:\/\//i)) {
-    url = 'https://' + url.replace(/^\/\//, '');
   }
 
   // Generate a cache key from URL and Tor usage
