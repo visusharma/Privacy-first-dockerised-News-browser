@@ -1,4 +1,4 @@
-# Privacy-First Dockerized Browser
+# Privacy-First Dockerized (News) Browser
 
 ## The Why
 
