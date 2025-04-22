@@ -286,7 +286,7 @@ async function releaseBrowser(browser) {
   }
 }
 
-// Improved URL resolution function
+// Function to resolve URLs
 function resolveUrl(baseUrl, relativeUrl) {
   try {
     // Handle special cases
@@ -488,15 +488,6 @@ function rewriteLinks(html, baseUrl, useTor) {
             return null;
           };
 
-          // Prevent navigation events
-          window.addEventListener('beforeunload', function(e) {
-            const currentUrl = window.location.href;
-            if (!currentUrl.includes('/browse')) {
-              e.preventDefault();
-              e.returnValue = '';
-            }
-          });
-
           // Initialize URL interception
           console.log('URL interceptor initialized');
         })();
@@ -522,21 +513,6 @@ function rewriteLinks(html, baseUrl, useTor) {
       }
     });
 
-    // Add navigation bar
-    $('body').append(`
-      <div style="position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.8); color: white; padding: 8px; z-index: 99999; display: flex; justify-content: space-between;">
-        <div style="max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-          ${baseUrl}
-        </div>
-        <div>
-          <span style="background: ${useTor ? '#5a67d8' : '#e53e3e'}; padding: 2px 6px; border-radius: 4px;">
-            ${useTor ? 'Tor' : 'Direct'}
-          </span>
-          <a href="/" style="color: white; margin-left: 10px; text-decoration: none; border: 1px solid white; padding: 2px 6px; border-radius: 4px;">Home</a>
-        </div>
-      </div>
-    `);
-
     return $.html();
   } catch (error) {
     console.error('Error rewriting links:', error);
@@ -554,75 +530,41 @@ app.get('/browse', async (req, res) => {
     return res.status(400).send('Missing URL parameter');
   }
 
+  console.log('Original requested URL:', url);
+
+  // Handle special cases for certain news sites
+  const specialDomains = {
+    'themoscowtimes.com': 'https://www.themoscowtimes.com',
+    'moscowtimes.com': 'https://www.themoscowtimes.com',
+    'www.moscowtimes.com': 'https://www.themoscowtimes.com'
+  };
+
+  // Check if this is a special domain
+  const domainMatch = url.match(/^(?:https?:\/\/)?(?:www\.)?([^\/]+)/i);
+  if (domainMatch && specialDomains[domainMatch[1]]) {
+    const originalDomain = domainMatch[1];
+    url = url.replace(/^(?:https?:\/\/)?(?:www\.)?[^\/]+/, specialDomains[originalDomain]);
+    console.log(`Special domain "${originalDomain}" detected, redirecting to:`, url);
+  }
+
   // Ensure URL has a protocol
   if (!url.match(/^https?:\/\//i)) {
     url = 'https://' + url.replace(/^\/+/, '');
+    console.log('Added https protocol:', url);
   }
 
   // Validate URL format
   try {
-    new URL(url);
+    const parsedUrl = new URL(url);
+    console.log('Parsed URL:', {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      pathname: parsedUrl.pathname,
+      search: parsedUrl.search
+    });
   } catch (error) {
+    console.error('URL parsing error:', error);
     return res.status(400).send(`Invalid URL format: ${error.message}`);
-  }
-
-  // Check Tor connection if needed
-  if (useTor) {
-    if (!torConnected) {
-      console.log('Tor not connected, attempting to establish connection...');
-      const isConnected = await checkTorConnection();
-      if (!isConnected) {
-        return res.status(503).send(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Tor Connection Issue</title>
-            <style>
-              body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
-              .alert { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-              .info { background: #d1ecf1; border: 1px solid #bee5eb; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-              .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; margin: 5px; }
-              .btn:hover { background: #0056b3; }
-            </style>
-          </head>
-          <body>
-            <h1>Tor Connection Issue</h1>
-            
-            <div class="alert">
-              <h3>Unable to Connect to Tor Network</h3>
-              <p>We're having trouble establishing a connection to the Tor network.</p>
-            </div>
-
-            <div class="info">
-              <h3>Why this happens:</h3>
-              <ul>
-                <li>Temporary Tor network issues</li>
-                <li>High network latency or connectivity problems</li>
-                <li>Tor relays might be unavailable or overloaded</li>
-                <li>Your network might be blocking Tor connections</li>
-              </ul>
-            </div>
-
-            <h3>You can:</h3>
-            <p>
-              <a href="/browse?url=${encodeURIComponent(url)}" class="btn">Try accessing directly (without Tor)</a>
-              <a href="/browse?url=${encodeURIComponent(url)}&tor=true&bypass_cache=true" class="btn">Retry with Tor</a>
-              <a href="/" class="btn">Return to homepage</a>
-            </p>
-
-            <div class="info">
-              <p>If you continue having issues, you can:</p>
-              <ul>
-                <li>Wait a few minutes and try again</li>
-                <li>Use direct access for non-sensitive browsing</li>
-                <li>Check your network connection</li>
-              </ul>
-            </div>
-          </body>
-          </html>
-        `);
-      }
-    }
   }
 
   // Generate a cache key from URL and Tor usage
@@ -640,116 +582,58 @@ app.get('/browse', async (req, res) => {
   try {
     console.log('Launching browser...');
     browser = await getBrowser(useTor);
-
     console.log('Browser launched successfully');
-  const page = await browser.newPage();
-
-    // Set permissions - limit to essentials
+    
+    const page = await browser.newPage();
+    
+    // Set permissions
     const context = browser.defaultBrowserContext();
     await context.overridePermissions(url, ['geolocation']);
     
-    // Optimize page performance by blocking unnecessary resources
-  await page.setRequestInterception(true);
-  page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      // Block analytics, tracking, and other non-essential resources
-      if (
-        ['image', 'media', 'font'].includes(resourceType) && 
-        req.url().match(/\.(gif|jpg|jpeg|png|webp|svg|ico|woff|woff2|ttf|eot)$/i)
-      ) {
-        if (req.url().includes('logo') || req.url().includes('header') || req.url().includes('icon')) {
-          req.continue();
-        } else {
-          req.abort();
-        }
-      } else if (resourceType === 'script' && 
-                (req.url().includes('analytics') || 
-                 req.url().includes('tracking') || 
-                 req.url().includes('facebook') || 
-                 req.url().includes('google-analytics'))) {
-      req.abort();
-    } else {
-      req.continue();
-    }
-  });
-
     // Set more realistic browser fingerprinting
     await page.evaluateOnNewDocument(() => {
-      // Override the hardware concurrency
-      Object.defineProperty(navigator, 'hardwareConcurrency', {
-        get: () => 4
-      });
+      // Override navigator properties
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
       
-      // Override the user agent
-      Object.defineProperty(navigator, 'userAgent', {
-        get: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-      });
-      
-      // Override platform
-      Object.defineProperty(navigator, 'platform', { 
-        get: () => 'Win32'
-      });
-      
-      // Override languages
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en']
-      });
-      
-      // Hide automation
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => false
-      });
-      
-      // Chrome-specific override
+      // Add Chrome-specific properties
       window.chrome = {
         runtime: {},
         loadTimes: function() {},
         csi: function() {},
         app: {}
       };
-      
-      // Override permissions
-      navigator.permissions = {
-        query: function() {
-          return Promise.resolve({state: "granted"});
-        }
-      };
-    });
-    
-    // Set realistic user agent
-  await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-    );
-    
-    // Set essential headers
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Cache-Control': 'max-age=0',
-      'Upgrade-Insecure-Requests': '1'
     });
 
-    // Add some randomization to appear more human-like
-    await page.setViewport({
-      width: 1366 + Math.floor(Math.random() * 100),
-      height: 768 + Math.floor(Math.random() * 100),
-      deviceScaleFactor: 1
+    // Set realistic headers
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
     });
 
     // Navigate with optimized settings
     console.log(`Navigating to ${url}...`);
-    await page.goto(url, { 
+    const response = await page.goto(url, { 
       waitUntil: 'domcontentloaded',
       timeout: useTor ? 60000 : 30000
     });
 
-    // Perform human-like interactions before getting content
-    await page.evaluate(() => {
-      window.scrollTo(0, Math.floor(Math.random() * 100));
-    });
+    if (!response) {
+      throw new Error('No response received from the page');
+    }
 
-    // Small delay to let any dynamic content load
-    await page.waitForTimeout(1000);
+    console.log('Response status:', response.status());
+    if (response.status() >= 400) {
+      throw new Error(`HTTP ${response.status()}: ${response.statusText()}`);
+    }
 
     // Get the content
     console.log('Getting page content...');
@@ -767,20 +651,26 @@ app.get('/browse', async (req, res) => {
 
   } catch (error) {
     console.error('Error during browsing:', error);
+    console.error('Stack trace:', error.stack);
     
     if (error.message.includes('Navigation timeout') || 
         error.message.includes('net::ERR_TIMED_OUT')) {
       return res.status(504).send(`
         <h1>Page Load Timeout</h1>
-        <p>The page took too long to load. This can happen when using Tor due to the additional routing or the site may be blocking proxies.</p>
+        <p>The page took too long to load. This can happen when:</p>
+        <ul>
+          <li>The site is blocking automated browsers</li>
+          <li>The site is experiencing high load</li>
+          <li>There are network connectivity issues</li>
+          ${useTor ? '<li>The Tor network is experiencing slowdowns</li>' : ''}
+        </ul>
         <p>You can try:</p>
         <ul>
-          <li>Refreshing the page</li>
-          <li>Using a different website</li>
-          <li>${useTor ? 'Browsing without Tor for faster access' : 'Waiting a bit longer'}</li>
+          <li><a href="/browse?url=${encodeURIComponent(url)}&bypass_cache=true">Refresh the page</a></li>
+          <li><a href="/browse?url=${encodeURIComponent(url)}${useTor ? '' : '&tor=true'}">Try ${useTor ? 'without' : 'with'} Tor</a></li>
+          <li><a href="/">Return to homepage</a></li>
         </ul>
-        <p>Error details: ${error.message}</p>
-        <p><a href="/">Return to homepage</a></p>
+        <p><small>Error details: ${error.message}</small></p>
       `);
     }
     
@@ -789,12 +679,17 @@ app.get('/browse', async (req, res) => {
       <p>There was a problem loading the requested page.</p>
       <p>This might be because:</p>
       <ul>
-        <li>The website detected our browser as a bot</li>
-        <li>The website doesn't allow access via proxies ${useTor ? 'or Tor exit nodes' : ''}</li>
+        <li>The website is blocking our access</li>
+        <li>The website requires JavaScript for core functionality</li>
         <li>There was a network error</li>
       </ul>
-      <p>Error details: ${error.message}</p>
-      <p><a href="/">Return to homepage</a></p>
+      <p>You can try:</p>
+      <ul>
+        <li><a href="/browse?url=${encodeURIComponent(url)}&bypass_cache=true">Refresh the page</a></li>
+        <li><a href="/browse?url=${encodeURIComponent(url)}${useTor ? '' : '&tor=true'}">Try ${useTor ? 'without' : 'with'} Tor</a></li>
+        <li><a href="/">Return to homepage</a></li>
+      </ul>
+      <p><small>Error details: ${error.message}</small></p>
     `);
   } finally {
     if (browser) {
