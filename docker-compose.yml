@@ -1,0 +1,43 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    mem_limit: 2G
+    cpus: 2
+    environment:
+      - NODE_ENV=production
+      - TOR_PROXY_HOST=tor-proxy
+      - TOR_PROXY_PORT=9050
+    volumes:
+      - ./app:/app/app
+    depends_on:
+      - tor-proxy
+    networks:
+      - tor_network
+
+  tor-proxy:
+    image: alpine:latest
+    command: >
+      sh -c "
+        apk add --no-cache tor &&
+        echo 'SocksPort 0.0.0.0:9050' > /etc/tor/torrc &&
+        echo 'Log notice stdout' >> /etc/tor/torrc &&
+        echo 'DataDirectory /var/lib/tor' >> /etc/tor/torrc &&
+        tor -f /etc/tor/torrc
+      "
+    restart: unless-stopped
+    expose:
+      - "9050"
+    volumes:
+      - tor_data:/var/lib/tor
+    networks:
+      - tor_network
+
+networks:
+  tor_network:
+    driver: bridge
+
+volumes:
+  tor_data:
