@@ -114,4 +114,4 @@ This project stands on the shoulders of giants in the privacy and open-source co
 - Open-source news platforms
 
 Join us in making news consumption more private, unbiased, and user-controlled. 
-:sunflower: or :hot_pepper:
+🌻 or 🌶️
